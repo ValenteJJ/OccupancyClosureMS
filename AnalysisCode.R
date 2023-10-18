@@ -2,7 +2,11 @@
 library(RCurl)
 library(tidyverse)
 library(ctmm)
+<<<<<<< HEAD
 library(gdata)
+=======
+
+>>>>>>> 5d59d82fcbf9c340e2fb48ecffe04ba19fb9fdc1
 
 #----------------------------------------------------------------------
 # Reading in and formatting telemtry data for movement modeling
