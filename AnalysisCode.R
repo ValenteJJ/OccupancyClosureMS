@@ -3,7 +3,10 @@ library(RCurl)
 library(tidyverse)
 library(ctmm)
 library(gdata)
-
+library(sp)
+library(openxlsx)
+library(maptools)
+library(unmarked)
 #----------------------------------------------------------------------
 # Reading in and formatting telemtry data for movement modeling
 #----------------------------------------------------------------------
@@ -168,43 +171,7 @@ save(list=ls(), file="SimulationStart.RData")
 
 rm(list=ls())
 
-
-load_url <- function (url, ..., sha1 = NULL) {
-  # based very closely on code for devtools::source_url
-  stopifnot(is.character(url), length(url) == 1)
-  temp_file <- tempfile()
-  on.exit(unlink(temp_file))
-  request <- httr::GET(url)
-  httr::stop_for_status(request)
-  writeBin(httr::content(request, type = "raw"), temp_file)
-  file_sha1 <- digest::digest(file = temp_file, algo = "sha1")
-  if (is.null(sha1)) {
-    message("SHA-1 hash of file is ", file_sha1)
-  }
-  else {
-    if (nchar(sha1) < 6) {
-      stop("Supplied SHA-1 hash is too short (must be at least 6 characters)")
-    }
-    file_sha1 <- substr(file_sha1, 1, nchar(sha1))
-    if (!identical(file_sha1, sha1)) {
-      stop("SHA-1 hash of downloaded file (", file_sha1, 
-           ")\n  does not match expected value (", sha1, 
-           ")", call. = FALSE)
-    }
-  }
-  load(temp_file, envir = .GlobalEnv)
-}
-
-load_url('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData')
-
-
-download.file("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData", 'test.RData')
-
-if (!file.exists('SimulationStart.RData')){
-  download.file("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData", 'test')
-}
-
-load('test')
+load(url("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData?raw=true"))
 
 #This function establishes territories of the birds and
 #simulates their positions minute-by-minute
@@ -398,9 +365,9 @@ systCircles75 = rgeos::gBuffer(systPoints, byid=T, width=75)
 systCircles50 = rgeos::gBuffer(systPoints, byid=T, width=50)
 
 #Reading in the sampling times for the point count stations
-sampleTimes = rbind(read_excel('SimulationParameters.xlsx', sheet='Interval0'),
-                    read_excel('SimulationParameters.xlsx', sheet='Interval24Hours'),
-                    read_excel('SimulationParameters.xlsx', sheet='Interval10Days'))
+sampleTimes = rbind(read.xlsx('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationParameters.xlsx?raw=true', sheet='Interval0'),
+                    read.xlsx('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationParameters.xlsx?raw=true', sheet='Interval24Hours'),
+                    read.xlsx('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationParameters.xlsx?raw=true', sheet='Interval10Days'))
 
 
 #The 3 simulation densities
@@ -1204,8 +1171,6 @@ for(i in 1:2){
                   occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens3))
   
   results = tmpRes1
-  filename = paste('C:/Users/jjv0016/Box/Wood Thrush Project/Manuscripts/Viteks WOTH paper/SimResultsLowDensity05/', paste(paste('results', i, sep=''), '.csv', sep=''), sep='')
+  filename = paste(paste('results', i, sep=''), '.csv', sep='')
   write.csv(results, file=filename)
-  
-  
 }
