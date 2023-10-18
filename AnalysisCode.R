@@ -163,23 +163,61 @@ save(list=ls(), file="SimulationStart.RData")
 
 
 #--------------------------------------------------------------------------
-#This function establishes territories of the birds and
-#simulates their positions minute-by-minute
+#Wood Thrush simulations and sampling
 #--------------------------------------------------------------------------
 
 rm(list=ls())
 
-load("SimulationStart.RData")
+
+load_url <- function (url, ..., sha1 = NULL) {
+  # based very closely on code for devtools::source_url
+  stopifnot(is.character(url), length(url) == 1)
+  temp_file <- tempfile()
+  on.exit(unlink(temp_file))
+  request <- httr::GET(url)
+  httr::stop_for_status(request)
+  writeBin(httr::content(request, type = "raw"), temp_file)
+  file_sha1 <- digest::digest(file = temp_file, algo = "sha1")
+  if (is.null(sha1)) {
+    message("SHA-1 hash of file is ", file_sha1)
+  }
+  else {
+    if (nchar(sha1) < 6) {
+      stop("Supplied SHA-1 hash is too short (must be at least 6 characters)")
+    }
+    file_sha1 <- substr(file_sha1, 1, nchar(sha1))
+    if (!identical(file_sha1, sha1)) {
+      stop("SHA-1 hash of downloaded file (", file_sha1, 
+           ")\n  does not match expected value (", sha1, 
+           ")", call. = FALSE)
+    }
+  }
+  load(temp_file, envir = .GlobalEnv)
+}
+
+load_url('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData')
 
 
-simLocations <- function(regionWidth = 6000, #m - creates a default of 25 km2 sampling region
+download.file("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData", 'test.RData')
+
+if (!file.exists('SimulationStart.RData')){
+  download.file("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/SimulationStart.RData", 'test')
+}
+
+load('test')
+
+#This function establishes territories of the birds and
+#simulates their positions minute-by-minute
+
+simLocations <- function(regionWidth = 6000, #m - creates a default of 36 km2 sampling region
                          regionHeight = 6000, #m
-                         sampleWidth = regionWidth - 1000,
+                         sampleWidth = regionWidth - 1000, #But we're only going to sample from the 25 km2 heart of the region
                          sampleHeight = regionHeight - 1000,
                          nDays = 42, #6 weeks of sampling
                          hours = 5, #Number of hours during which to simulate minute-by-minute bird locations
                          density = 0.2, #Males/ha
                          gridCellSize = 100){ #How far apart territory centers must be
+  
   #Some housekeeping
   nBirds = round((regionWidth * regionHeight * density)/10000)
   times = seq(0, hours*60*60, 60)
@@ -194,7 +232,7 @@ simLocations <- function(regionWidth = 6000, #m - creates a default of 25 km2 sa
   region = SpatialPolygons(list(Polygons(list(Polygon(cbind(c(regionXmin, regionXmax, regionXmax, regionXmin), c(regionYmax, regionYmax, regionYmin, regionYmin)))), 1)))
   sampleArea = SpatialPolygons(list(Polygons(list(Polygon(cbind(c(sampleXmin, sampleXmax, sampleXmax, sampleXmin), c(sampleYmax, sampleYmax, sampleYmin, sampleYmin)))), 1)))
   grid = SpatialPoints(makegrid(x=sampleArea, cellsize=gridCellSize))
-  shiftProb = plogis(rnorm(1, mean = qlogis(0.009920322), sd = 0.23))
+  shiftProb = plogis(rnorm(1, mean = qlogis(0.009920322), sd = 0.23)) #This is based on estimates from our logistic exposure model
   
   for(d in 1:nDays){
     
@@ -217,7 +255,7 @@ simLocations <- function(regionWidth = 6000, #m - creates a default of 25 km2 sa
       moveModels = sample(1:length(modelList), size=nBirds, replace=T)
       
       #When we simulate locations of birds, those simulated points will be located in the geographical space where
-      #Vitek/Matthias collected these data. Here we are recording the centers of those territories so we can move
+      #the data were originally collected. Here we are recording the centers of those territories so we can move
       #the center of the bird's territory to where we want it to be located in our simulated region.
       adjustX = centerX[moveModels]
       adjustY = centerY[moveModels]
@@ -284,6 +322,11 @@ simLocations <- function(regionWidth = 6000, #m - creates a default of 25 km2 sa
   return(birdLocs)
 }
 
+
+#This function establishes the sampling protocol, samples birds using that protocol,
+#fits an occupancy model to those data, then compares the occupancy estimate with
+#the true occupancy status of the sampled sites based on 3 definitions of occupancy:
+#instantaneous occupancy, daily occupancy, and seasonal occupancy.
 options(dplyr.summarise.inform=F)
 
 occAnalyses = function(circleData = NULL, radius = NULL, placement = NULL, occData=NULL, nMins=NULL, intervalLength=NULL, nSurveys=NULL, density=NULL){
@@ -307,16 +350,6 @@ occAnalyses = function(circleData = NULL, radius = NULL, placement = NULL, occDa
     select(-samplePoint)
   
   res = occu(~1~1, unmarkedFrameOccu(yData))
-  
-  
-  
-  # tmp2 = data.frame(t(SE(res))) %>% 
-  #   setNames(c('sePsi', 'seP')) %>% 
-  #   mutate(surveyLength = nMins,
-  #          intervalLength = intervalLength,
-  #          nSurveys = nSurveys,
-  #          radius = radius,
-  #          placement=placement)
   
   #Summarizing "occupancy" at different time scales
   instOcc = occData %>% 
@@ -352,8 +385,9 @@ occAnalyses = function(circleData = NULL, radius = NULL, placement = NULL, occDa
 }
 
 
-
 #Creating a standardized sampling grid with points located 500 m apart
+#Note that the points for the random sampling will be generated inside
+#the for-loop
 tmp = expand.grid("x" = seq(-2250, 2250, 500),
                   "y" = seq(-2250, 2250, 500)) %>% 
   arrange(y, x) %>% 
@@ -363,24 +397,29 @@ systCircles100 = rgeos::gBuffer(systPoints, byid=T, width=100)
 systCircles75 = rgeos::gBuffer(systPoints, byid=T, width=75)
 systCircles50 = rgeos::gBuffer(systPoints, byid=T, width=50)
 
+#Reading in the sampling times for the point count stations
 sampleTimes = rbind(read_excel('SimulationParameters.xlsx', sheet='Interval0'),
                     read_excel('SimulationParameters.xlsx', sheet='Interval24Hours'),
                     read_excel('SimulationParameters.xlsx', sheet='Interval10Days'))
 
 
-dens1 = 0.05
-# dens2 = 0.03
-# dens3 = 0.01
+#The 3 simulation densities
+dens1 = 0.2
+dens2 = 0.1
+dens3 = 0.05
 
-# a = Sys.time()
-for(i in 735:1000){
+
+#### CONDUCTING THE ITERATIVE SIMULATIONS ####
+
+
+for(i in 1:2){
   
   print(i)
   birdPositions = simLocations(density = dens1)
-  # birdPositions2 = data.frame('bird' = sample(unique(birdPositions$bird), size = round((dens2/dens1)*length(unique(birdPositions$bird))))) %>% 
-  #   left_join(birdPositions, by='bird')
-  # birdPositions3 = data.frame('bird' = sample(unique(birdPositions$bird), size = round((dens3/dens1)*length(unique(birdPositions$bird))))) %>% 
-  #   left_join(birdPositions, by='bird')
+  birdPositions2 = data.frame('bird' = sample(unique(birdPositions$bird), size = round((dens2/dens1)*length(unique(birdPositions$bird))))) %>%
+    left_join(birdPositions, by='bird')
+  birdPositions3 = data.frame('bird' = sample(unique(birdPositions$bird), size = round((dens3/dens1)*length(unique(birdPositions$bird))))) %>%
+    left_join(birdPositions, by='bird')
   
   tmp = data.frame('x' = runif(100, min=-2250, max=2250),
                    'y' = runif(100, min=-2250, max=2250)) %>% 
@@ -400,9 +439,13 @@ for(i in 735:1000){
   
   
   birdPositionsSp = SpatialPointsDataFrame(birdPositions[,c('x', 'y')], data=birdPositions)
-  # birdPositions2Sp = SpatialPointsDataFrame(birdPositions2[,c('x', 'y')], data=birdPositions2)
-  # birdPositions3Sp = SpatialPointsDataFrame(birdPositions3[,c('x', 'y')], data=birdPositions3)
+  birdPositions2Sp = SpatialPointsDataFrame(birdPositions2[,c('x', 'y')], data=birdPositions2)
+  birdPositions3Sp = SpatialPointsDataFrame(birdPositions3[,c('x', 'y')], data=birdPositions3)
   
+  
+  
+  
+  #Simulations for density 1
   occSitesSyst100 = over(birdPositionsSp, systCircles100)
   occSitesSyst75 = over(birdPositionsSp, systCircles75)
   occSitesSyst50 = over(birdPositionsSp, systCircles50)
@@ -660,501 +703,505 @@ for(i in 735:1000){
                   occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 3, dens1),
                   occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens1))
   
-  # occSitesSyst100 = over(birdPositions2Sp, systCircles100)
-  # occSitesSyst75 = over(birdPositions2Sp, systCircles75)
-  # occSitesSyst50 = over(birdPositions2Sp, systCircles50)
-  # occSitesRand100 = over(birdPositions2Sp, randCircles100)
-  # occSitesRand75 = over(birdPositions2Sp, randCircles75)
-  # occSitesRand50 = over(birdPositions2Sp, randCircles50)
-  # 
-  # occSitesSyst100 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesSyst100$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesSyst75 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesSyst75$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesSyst50 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesSyst50$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand100 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesRand100$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand75 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesRand75$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand50 = birdPositions2 %>% 
-  #   mutate(samplePoint = occSitesRand50$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions2$t),
-  #                         'day' = unique(birdPositions2$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # tmpRes2 = rbind(occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 2, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 4, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 2, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 4, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 3, dens2),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens2))
-  # 
-  # occSitesSyst100 = over(birdPositions3Sp, systCircles100)
-  # occSitesSyst75 = over(birdPositions3Sp, systCircles75)
-  # occSitesSyst50 = over(birdPositions3Sp, systCircles50)
-  # occSitesRand100 = over(birdPositions3Sp, randCircles100)
-  # occSitesRand75 = over(birdPositions3Sp, randCircles75)
-  # occSitesRand50 = over(birdPositions3Sp, randCircles50)
-  # 
-  # occSitesSyst100 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesSyst100$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesSyst75 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesSyst75$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesSyst50 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesSyst50$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(systPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand100 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesRand100$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand75 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesRand75$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # occSitesRand50 = birdPositions3 %>% 
-  #   mutate(samplePoint = occSitesRand50$pointNum) %>% 
-  #   filter(!is.na(samplePoint)) %>%
-  #   select(t, day, samplePoint) %>% 
-  #   unique() %>% 
-  #   mutate(occupied = 1) %>% 
-  #   full_join(expand.grid('t' = unique(birdPositions3$t),
-  #                         'day' = unique(birdPositions3$day),
-  #                         'samplePoint' = unique(randPoints@data$pointNum)),
-  #             by=c('t', 'day', 'samplePoint')) %>% 
-  #   mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>% 
-  #   arrange(samplePoint, day, t)
-  # 
-  # tmpRes3 = rbind(occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 2, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 4, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 2, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 4, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 3, dens3),
-  #                 occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens3))
+  #Simulations for density 2
+  occSitesSyst100 = over(birdPositions2Sp, systCircles100)
+  occSitesSyst75 = over(birdPositions2Sp, systCircles75)
+  occSitesSyst50 = over(birdPositions2Sp, systCircles50)
+  occSitesRand100 = over(birdPositions2Sp, randCircles100)
+  occSitesRand75 = over(birdPositions2Sp, randCircles75)
+  occSitesRand50 = over(birdPositions2Sp, randCircles50)
+
+  occSitesSyst100 = birdPositions2 %>%
+    mutate(samplePoint = occSitesSyst100$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesSyst75 = birdPositions2 %>%
+    mutate(samplePoint = occSitesSyst75$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesSyst50 = birdPositions2 %>%
+    mutate(samplePoint = occSitesSyst50$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand100 = birdPositions2 %>%
+    mutate(samplePoint = occSitesRand100$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand75 = birdPositions2 %>%
+    mutate(samplePoint = occSitesRand75$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand50 = birdPositions2 %>%
+    mutate(samplePoint = occSitesRand50$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions2$t),
+                          'day' = unique(birdPositions2$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  tmpRes2 = rbind(occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 2, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 4, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 2, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 4, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 2, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 4, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 2, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 4, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 2, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 4, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 2, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 4, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 3, dens2),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 3, dens2),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 3, dens2),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 3, dens2),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 3, dens2),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 3, dens2),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens2))
+  
+  
+  
+#Simulations for density 3
+  occSitesSyst100 = over(birdPositions3Sp, systCircles100)
+  occSitesSyst75 = over(birdPositions3Sp, systCircles75)
+  occSitesSyst50 = over(birdPositions3Sp, systCircles50)
+  occSitesRand100 = over(birdPositions3Sp, randCircles100)
+  occSitesRand75 = over(birdPositions3Sp, randCircles75)
+  occSitesRand50 = over(birdPositions3Sp, randCircles50)
+
+  occSitesSyst100 = birdPositions3 %>%
+    mutate(samplePoint = occSitesSyst100$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesSyst75 = birdPositions3 %>%
+    mutate(samplePoint = occSitesSyst75$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesSyst50 = birdPositions3 %>%
+    mutate(samplePoint = occSitesSyst50$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(systPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand100 = birdPositions3 %>%
+    mutate(samplePoint = occSitesRand100$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand75 = birdPositions3 %>%
+    mutate(samplePoint = occSitesRand75$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  occSitesRand50 = birdPositions3 %>%
+    mutate(samplePoint = occSitesRand50$pointNum) %>%
+    filter(!is.na(samplePoint)) %>%
+    select(t, day, samplePoint) %>%
+    unique() %>%
+    mutate(occupied = 1) %>%
+    full_join(expand.grid('t' = unique(birdPositions3$t),
+                          'day' = unique(birdPositions3$day),
+                          'samplePoint' = unique(randPoints@data$pointNum)),
+              by=c('t', 'day', 'samplePoint')) %>%
+    mutate(occupied = ifelse(is.na(occupied), 0, occupied)) %>%
+    arrange(samplePoint, day, t)
+
+  tmpRes3 = rbind(occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 2, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 4, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 2, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 4, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 2, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 4, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 2, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 4, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 2, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 4, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 2, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 4, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, 'none', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '24Hours', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 30, '10Days', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, 'none', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '24Hours', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 10, '10Days', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, 'none', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '24Hours', 3, dens3),
+                  occAnalyses(randCircles100, 100, 'random', occSitesRand100, 3, '10Days', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, 'none', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '24Hours', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 30, '10Days', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, 'none', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '24Hours', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 10, '10Days', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, 'none', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '24Hours', 3, dens3),
+                  occAnalyses(randCircles75, 75, 'random', occSitesRand75, 3, '10Days', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, 'none', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '24Hours', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 30, '10Days', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, 'none', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '24Hours', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 10, '10Days', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, 'none', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '24Hours', 3, dens3),
+                  occAnalyses(randCircles50, 50, 'random', occSitesRand50, 3, '10Days', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, 'none', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '24Hours', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 30, '10Days', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, 'none', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '24Hours', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 10, '10Days', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, 'none', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '24Hours', 3, dens3),
+                  occAnalyses(systCircles100, 100, 'systematic', occSitesSyst100, 3, '10Days', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, 'none', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '24Hours', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 30, '10Days', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, 'none', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '24Hours', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 10, '10Days', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, 'none', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '24Hours', 3, dens3),
+                  occAnalyses(systCircles75, 75, 'systematic', occSitesSyst75, 3, '10Days', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, 'none', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '24Hours', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 30, '10Days', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, 'none', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '24Hours', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 10, '10Days', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, 'none', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '24Hours', 3, dens3),
+                  occAnalyses(systCircles50, 50, 'systematic', occSitesSyst50, 3, '10Days', 3, dens3))
   
   results = tmpRes1
   filename = paste('C:/Users/jjv0016/Box/Wood Thrush Project/Manuscripts/Viteks WOTH paper/SimResultsLowDensity05/', paste(paste('results', i, sep=''), '.csv', sep=''), sep='')
@@ -1162,4 +1209,3 @@ for(i in 735:1000){
   
   
 }
-# Sys.time()-a
