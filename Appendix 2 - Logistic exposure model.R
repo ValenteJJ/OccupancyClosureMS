@@ -1,44 +1,17 @@
 
-library(RCurl)
-library(tidyverse)
-
-
-rm(list=ls())
-
-
-woth.locs <- read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/woth_locs20.csv"), header=T, as.is=T)
-
-
-tmp = woth.locs %>% 
-  mutate(date = date(dt)) %>% 
-  select(bird_id, date, territory) %>% 
-  unique()
-
-
-
-
-
-
-
-
-
-
-## logistic exposure for WOTH telemetry data
-## v2: using updaded fate data, 28Jun20
-## v3: final tweaks
-## v4: cleaned script
-
 # references:
 # https://www.researchgate.net/post/Does_anybody_have_code_for_running_a_logistic_exposure_nest_survival_model_in_R
 # https://rpubs.com/bbolker/logregexp
 
-library(MASS)
+library(RCurl)
+library(tidyverse)
 library(DHARMa)
 
-setwd("C:/CLOUD/MS_Thesis/WOTH_movement/analysis/survival_model")
+rm(list=ls())
 
-woth.fate <- read.csv("woth_fate_v2.csv", header = T, as.is = T)
-str(woth.fate)
+
+woth.fate <- read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/wothFates.csv"), header=T, as.is=T)
+
 
 ## metadata (not all variables are utilized):
 # check =	the date of telemetry check - the first one is capture date
