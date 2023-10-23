@@ -5241,7 +5241,7 @@ tmp1 = wothLocs %>%
 #----------------------------------------------------------------------
 # Reading in and formatting telemtry data for movement modeling
 #----------------------------------------------------------------------
-woth.locs <- read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/woth_locs20.csv"), header=T, as.is=T)
+woth.locs <- read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/wothLocations.csv"), header=T, as.is=T)
 
 #Remove transition locations where territory = NA
 woth.locs <- subset(woth.locs, !is.na(woth.locs$territory))
