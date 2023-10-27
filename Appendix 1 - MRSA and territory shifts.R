@@ -61,7 +61,7 @@ estDepDates = structure(list(bird_id = c("GT5", "WAM2", "WAM15", "NQP1", "WAM14"
 
 
 #Read in telemetry locations
-wothLocs = read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/woth_locs20.csv")) %>% 
+wothLocs = read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/wothLocations.csv")) %>% 
   mutate(dt = dmy_hm(dt)) %>%
   mutate_if(is.factor, as.character) %>% 
   mutate(territory = NA)
