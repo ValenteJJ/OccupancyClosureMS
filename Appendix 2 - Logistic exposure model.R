@@ -3,9 +3,10 @@
 # https://www.researchgate.net/post/Does_anybody_have_code_for_running_a_logistic_exposure_nest_survival_model_in_R
 # https://rpubs.com/bbolker/logregexp
 
-library(RCurl)
-library(tidyverse)
-library(DHARMa)
+library(groundhog)
+groundhog.library('RCurl', '2023-11-02')
+groundhog.library('tidyverse', '2023-11-02')
+groundhog.library('DHARMa', '2023-11-02')
 
 rm(list=ls())
 
