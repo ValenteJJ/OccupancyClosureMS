@@ -1,15 +1,14 @@
 
-library(RCurl)
-library(tidyverse)
-library(ctmm)
-library(gdata)
-library(sp)
-library(openxlsx)
-library(maptools)
-library(unmarked)
-library(marcher)
-
-
+library(groundhog)
+groundhog.library('RCurl', '2023-11-02')
+groundhog.library('tidyverse', '2023-11-02')
+groundhog.library('ctmm', '2023-11-02')
+groundhog.library('gdata', '2023-11-02')
+groundhog.library('sp', '2023-11-02')
+groundhog.library('openxlsx', '2023-11-02')
+groundhog.library('maptools', '2023-11-02')
+groundhog.library('unmarked', '2023-11-02')
+groundhog.library('marcher', '2023-11-02')
 
 rm(list=ls())
 
@@ -167,7 +166,7 @@ keep(modelList, woth.ctmm, woth.locs, centerX, centerY, sure=T)
 
 #Saving the output of the modeling analysis so we do not have to re-run it before
 #every simulation
-save(list=ls(), file="SimulationStart.RData")
+# save(list=ls(), file="SimulationStart.RData")
 
 
 
