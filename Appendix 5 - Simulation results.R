@@ -1,9 +1,8 @@
 
-library(RCurl)
-library(tidyverse)
-library(cowplot)
-
-
+library(groundhog)
+groundhog.library('RCurl', '2023-11-02')
+groundhog.library('tidyverse', '2023-11-02')
+groundhog.library('cowplot', '2023-11-02')
 
 rm(list=ls())
 
