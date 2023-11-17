@@ -1,14 +1,7 @@
 
 library(groundhog)
-groundhog.library('RCurl', '2023-11-02')
-groundhog.library('tidyverse', '2023-11-02')
-groundhog.library('ctmm', '2023-11-02')
-groundhog.library('gdata', '2023-11-02')
-groundhog.library('sp', '2023-11-02')
-groundhog.library('openxlsx', '2023-11-02')
-groundhog.library('maptools', '2023-11-02')
-groundhog.library('unmarked', '2023-11-02')
-groundhog.library('marcher', '2023-11-02')
+pkgs <- c('rgeos','RCurl','tidyverse', 'ctmm','gdata','sp', 'openxlsx','maptools','unmarked','marcher')
+groundhog.library(pkgs,'2023-11-02')
 
 rm(list=ls())
 
