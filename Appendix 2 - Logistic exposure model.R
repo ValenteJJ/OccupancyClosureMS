@@ -4,9 +4,9 @@
 # https://rpubs.com/bbolker/logregexp
 
 library(groundhog)
-groundhog.library('RCurl', '2023-11-02')
-groundhog.library('tidyverse', '2023-11-02')
-groundhog.library('DHARMa', '2023-11-02')
+pkgs = c('RCurl', 'tidyverse', 'DHARMa')
+groundhog.library(pkgs, '2023-11-02')
+
 
 rm(list=ls())
 
