@@ -362,6 +362,7 @@ systCircles100 = rgeos::gBuffer(systPoints, byid=T, width=100)
 systCircles75 = rgeos::gBuffer(systPoints, byid=T, width=75)
 systCircles50 = rgeos::gBuffer(systPoints, byid=T, width=50)
 
+
 #Reading in the sampling times for the point count stations
 sampleTimes = rbind(read.xlsx('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/Appendix%203%20-%20Simulated%20sampling%20schedule.xlsx?raw=true', sheet='Interval0'),
                     read.xlsx('https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/Appendix%203%20-%20Simulated%20sampling%20schedule.xlsx?raw=true', sheet='Interval24Hours'),
