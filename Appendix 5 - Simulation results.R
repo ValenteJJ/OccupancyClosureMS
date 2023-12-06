@@ -1,8 +1,7 @@
 
 library(groundhog)
-groundhog.library('RCurl', '2023-11-02')
-groundhog.library('tidyverse', '2023-11-02')
-groundhog.library('cowplot', '2023-11-02')
+pkgs = c('RCurl', 'tidyverse', 'cowplot')
+groundhog.library(pkgs, '2023-11-02')
 
 rm(list=ls())
 
