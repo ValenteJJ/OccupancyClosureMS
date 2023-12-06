@@ -45,6 +45,8 @@ capLocs = structure(list(bird_id = c("GT5", "WAM2", "WAM15", "NQP1", "WAM14",
                                                                                                                                4124819.205566)), row.names = c(NA, -41L), class = c("tbl_df", 
                                                                                                                                                                                     "tbl", "data.frame"))
 
+write.csv(capLocs, 'capLocs.csv')
+
 #Estimated dates of range shifts based on eyeball test
 estDepDates = structure(list(bird_id = c("GT5", "WAM2", "WAM15", "NQP1", "WAM14", 
                                          "WAM4", "WM1", "WM5", "WM6", "COLW3", "COLW5", "COLW2", "COLW4", 
@@ -57,6 +59,8 @@ estDepDates = structure(list(bird_id = c("GT5", "WAM2", "WAM15", "NQP1", "WAM14"
                                                                                                                             16234, 16217, 16217, NA, NA, NA, NA, NA, 16250, 16221, NA, 16246, 
                                                                                                                             16262, NA, NA, NA, NA), class = "Date")), row.names = c(NA, 41L
                                                                                                                             ), class = "data.frame")
+
+write.csv(estDepDates, 'estDepDates.csv')
 
 
 
