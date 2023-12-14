@@ -11,7 +11,7 @@ groundhog.library(pkgs, '2023-11-02')
 rm(list=ls())
 
 
-woth.fate <- read.csv(text = getURL("https://raw.githubusercontent.com/ValenteJJ/OccupancyClosureMS/main/wothFates.csv"), header=T, as.is=T)
+woth.fate <- read.csv(text = getURL("https://raw.githubusercontent.com/vitekology/OccupancyClosureMS/main/wothFates.csv"), header=T, as.is=T)
 
 
 ## metadata (not all variables are utilized):
