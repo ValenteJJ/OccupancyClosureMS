@@ -1,6 +1,6 @@
 
 library(groundhog)
-pkgs = c('RCurl', 'tidyverse', 'cowplot')
+pkgs = c('RCurl', 'tidyverse', 'cowplot', 'marcher')
 groundhog.library(pkgs, '2023-11-02')
 
 rm(list=ls())
@@ -9,7 +9,7 @@ rm(list=ls())
 #Load the results from the simulation
 #----------------------------------------------------------------------
 
-load(url("https://github.com/ValenteJJ/OccupancyClosureMS/blob/main/simulationResults.RData?raw=true"))
+load(url("https://github.com/vitekology/OccupancyClosureMS/blob/main/simulationResults.RData?raw=true"))
 
 #Metadata
 #psi - model-estimated occupancy
